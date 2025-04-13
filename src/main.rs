@@ -7,7 +7,7 @@ mod ws;
 use axum::{
     Router,
     http::{
-        Method,
+        HeaderValue, Method,
         header::{AUTHORIZATION, CONTENT_TYPE},
     },
     routing::get,
@@ -16,7 +16,7 @@ use dotenv::dotenv;
 use std::sync::Arc;
 use std::time::Duration;
 use tower_cookies::CookieManagerLayer;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 // use tokio::sync::broadcast;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
@@ -57,10 +57,10 @@ async fn main() {
     };
 
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(HeaderValue::from_static("http://localhost:5173"))
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([CONTENT_TYPE, AUTHORIZATION])
-        //.allow_credentials(true)
+        .allow_credentials(true)
         .max_age(Duration::from_secs(3600));
 
     let app = Router::new()
