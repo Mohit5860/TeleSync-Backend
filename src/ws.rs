@@ -116,6 +116,18 @@ struct MouseMoveResponse {
 }
 
 #[derive(Deserialize)]
+struct KeyPressData {
+    key: String,
+    to: ObjectId,
+}
+
+#[derive(Serialize)]
+struct KeyPressResponse {
+    message_type: String,
+    key: String,
+}
+
+#[derive(Deserialize)]
 struct MessageData {
     message: String,
     username: String,
@@ -477,6 +489,48 @@ async fn handle_rooms(
                                     message_type: "mouse-move".to_string(),
                                     x: data.x,
                                     y: data.y,
+                                };
+
+                                let response_text = serde_json::to_string(&response).unwrap();
+
+                                let sender_id = {
+                                    let user_sockets = ws_state.user_sockets.lock().await;
+                                    user_sockets.get(&data.to).cloned()
+                                };
+
+                                if let Some(sender_id) = sender_id {
+                                    let sender_arc = {
+                                        let sockets = ws_state.sockets.lock().await;
+                                        sockets.get(&sender_id).cloned()
+                                    };
+
+                                    if let Some(sender_arc) = sender_arc {
+                                        let mut sender = sender_arc.lock().await;
+                                        if let Err(err) =
+                                            sender.send(Message::Text(response_text.into())).await
+                                        {
+                                            eprintln!(
+                                                "Failed to send message to user {}: {}",
+                                                sender_id, err
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            "key-press" => {
+                                let data: KeyPressData =
+                                    match serde_json::from_value(json["data"].clone()) {
+                                        Ok(d) => d,
+                                        Err(_) => {
+                                            println!("err");
+                                            continue;
+                                        }
+                                    };
+
+                                let response: KeyPressResponse = KeyPressResponse {
+                                    message_type: "key-press".to_string(),
+                                    key: data.key,
                                 };
 
                                 let response_text = serde_json::to_string(&response).unwrap();
