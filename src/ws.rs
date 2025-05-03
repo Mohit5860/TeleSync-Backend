@@ -128,6 +128,16 @@ struct KeyPressResponse {
 }
 
 #[derive(Deserialize)]
+struct MouseClickData {
+    to: ObjectId,
+}
+
+#[derive(Serialize)]
+struct MouseClickResponse {
+    message_type: String,
+}
+
+#[derive(Deserialize)]
 struct MessageData {
     message: String,
     username: String,
@@ -174,6 +184,34 @@ struct HostLeftresponse {
 struct ParticipantLeft {
     message_type: String,
     user: ObjectId,
+}
+
+#[derive(Deserialize)]
+struct RequestAccessData {
+    to: ObjectId,
+    from: ObjectId,
+    username: String,
+}
+
+#[derive(Serialize)]
+struct RequestAccessResponse {
+    message_type: String,
+    user_id: ObjectId,
+    username: String,
+}
+
+#[derive(Deserialize)]
+struct AccessData {
+    code: String,
+    user_id: ObjectId,
+    username: String,
+}
+
+#[derive(Serialize)]
+struct AccessResponse {
+    message_type: String,
+    user_id: ObjectId,
+    username: String,
 }
 
 pub async fn handler(ws: WebSocketUpgrade, State(state): State<SharedState>) -> Response {
@@ -559,6 +597,48 @@ async fn handle_rooms(
                                     }
                                 }
                             }
+
+                            "mouse-click" => {
+                                let data: MouseClickData =
+                                    match serde_json::from_value(json["data"].clone()) {
+                                        Ok(d) => d,
+                                        Err(_) => {
+                                            println!("err");
+                                            continue;
+                                        }
+                                    };
+
+                                let response: MouseClickResponse = MouseClickResponse {
+                                    message_type: "mouse-click".to_string(),
+                                };
+
+                                let response_text = serde_json::to_string(&response).unwrap();
+
+                                let sender_id = {
+                                    let user_sockets = ws_state.user_sockets.lock().await;
+                                    user_sockets.get(&data.to).cloned()
+                                };
+
+                                if let Some(sender_id) = sender_id {
+                                    let sender_arc = {
+                                        let sockets = ws_state.sockets.lock().await;
+                                        sockets.get(&sender_id).cloned()
+                                    };
+
+                                    if let Some(sender_arc) = sender_arc {
+                                        let mut sender = sender_arc.lock().await;
+                                        if let Err(err) =
+                                            sender.send(Message::Text(response_text.into())).await
+                                        {
+                                            eprintln!(
+                                                "Failed to send message to user {}: {}",
+                                                sender_id, err
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
                             "message" => {
                                 let data: MessageData =
                                     match serde_json::from_value(json["data"].clone()) {
@@ -858,6 +938,135 @@ async fn handle_rooms(
                                 }
 
                                 if let Some(sender_id) = user_sockets.get(&room.host_id) {
+                                    let sender_arc = {
+                                        let sockets = ws_state.sockets.lock().await;
+                                        sockets.get(sender_id).cloned()
+                                    };
+
+                                    if let Some(sender_arc) = sender_arc {
+                                        let mut sender = sender_arc.lock().await;
+                                        if let Err(err) =
+                                            sender.send(Message::Text(response_text.into())).await
+                                        {
+                                            eprintln!(
+                                                "Failed to send message to user {}: {}",
+                                                sender_id, err
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            "request-access" => {
+                                let data: RequestAccessData =
+                                    match serde_json::from_value(json["data"].clone()) {
+                                        Ok(d) => d,
+                                        Err(_) => {
+                                            println!("err");
+                                            continue;
+                                        }
+                                    };
+
+                                let response: RequestAccessResponse = RequestAccessResponse {
+                                    message_type: "request-access".to_string(),
+                                    user_id: data.from,
+                                    username: data.username,
+                                };
+
+                                let response_text = serde_json::to_string(&response).unwrap();
+
+                                let user_sockets = ws_state.user_sockets.lock().await.clone();
+
+                                if let Some(sender_id) = user_sockets.get(&data.to) {
+                                    let sender_arc = {
+                                        let sockets = ws_state.sockets.lock().await;
+                                        sockets.get(sender_id).cloned()
+                                    };
+
+                                    if let Some(sender_arc) = sender_arc {
+                                        let mut sender = sender_arc.lock().await;
+                                        if let Err(err) =
+                                            sender.send(Message::Text(response_text.into())).await
+                                        {
+                                            eprintln!(
+                                                "Failed to send message to user {}: {}",
+                                                sender_id, err
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            "allowed-access" => {
+                                let data: AccessData =
+                                    match serde_json::from_value(json["data"].clone()) {
+                                        Ok(d) => d,
+                                        Err(_) => {
+                                            println!("err");
+                                            continue;
+                                        }
+                                    };
+
+                                let room: Room = match Database::get_room_by_code(
+                                    db.clone(),
+                                    &data.code,
+                                )
+                                .await
+                                {
+                                    Ok(Some(room)) => room,
+                                    _ => continue,
+                                };
+
+                                let response: AccessResponse = AccessResponse {
+                                    message_type: "allowed-access".to_string(),
+                                    user_id: data.user_id,
+                                    username: data.username,
+                                };
+                                let response_text = serde_json::to_string(&response).unwrap();
+                                let user_sockets = ws_state.user_sockets.lock().await.clone();
+
+                                for participant in &room.participants_id {
+                                    if let Some(sender_id) = user_sockets.get(&participant) {
+                                        let sender_arc = {
+                                            let sockets = ws_state.sockets.lock().await;
+                                            sockets.get(sender_id).cloned()
+                                        };
+
+                                        if let Some(sender_arc) = sender_arc {
+                                            let mut sender = sender_arc.lock().await;
+                                            if let Err(err) = sender
+                                                .send(Message::Text(response_text.clone().into()))
+                                                .await
+                                            {
+                                                eprintln!(
+                                                    "Failed to send message to user {}: {}",
+                                                    sender_id, err
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            "rejected-access" => {
+                                let data: AccessData =
+                                    match serde_json::from_value(json["data"].clone()) {
+                                        Ok(d) => d,
+                                        Err(_) => {
+                                            println!("err");
+                                            continue;
+                                        }
+                                    };
+
+                                let response: AccessResponse = AccessResponse {
+                                    message_type: "allowed-access".to_string(),
+                                    user_id: data.user_id,
+                                    username: data.username,
+                                };
+                                let response_text = serde_json::to_string(&response).unwrap();
+
+                                let user_sockets = ws_state.user_sockets.lock().await.clone();
+
+                                if let Some(sender_id) = user_sockets.get(&data.user_id) {
                                     let sender_arc = {
                                         let sockets = ws_state.sockets.lock().await;
                                         sockets.get(sender_id).cloned()
