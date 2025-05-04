@@ -761,6 +761,25 @@ async fn handle_rooms(
                                         }
                                     }
                                 }
+
+                                if let Some(sender_id) = user_sockets.get(&room.host_id) {
+                                    let sender_arc = {
+                                        let sockets = ws_state.sockets.lock().await;
+                                        sockets.get(sender_id).cloned()
+                                    };
+
+                                    if let Some(sender_arc) = sender_arc {
+                                        let mut sender = sender_arc.lock().await;
+                                        if let Err(err) =
+                                            sender.send(Message::Text(response_text.into())).await
+                                        {
+                                            eprintln!(
+                                                "Failed to send message to user {}: {}",
+                                                sender_id, err
+                                            );
+                                        }
+                                    }
+                                }
                             }
 
                             "video-started" | "video-stopped" => {
